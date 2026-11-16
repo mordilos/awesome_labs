@@ -441,6 +441,10 @@ func (m *model) cmdCheck() tea.Cmd {
 
 func (m *model) cmdShell(worker bool) tea.Cmd {
 	env := lab.EnvFor(m.cur.Profile)
+	if err := m.mgr.CheckIsolation(context.Background(), env); err != nil {
+		m.flash = err.Error()
+		return nil
+	}
 	if !m.mgr.VMRunning(env, worker) {
 		m.flash = "the " + env.Title + " is not running — press s to prepare the lab first"
 		return nil

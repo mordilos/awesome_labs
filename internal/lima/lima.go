@@ -20,10 +20,13 @@ var Binary = "limactl"
 
 // Instance is a subset of `limactl list --json`.
 type Instance struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	CPUs   int    `json:"cpus"`
-	Memory int64  `json:"memory"`
+	Dir       string `json:"dir"`
+	VMType    string `json:"vmType"`
+	DriverPID int    `json:"driverPID"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	CPUs      int    `json:"cpus"`
+	Memory    int64  `json:"memory"`
 }
 
 // Available reports whether limactl is on PATH.

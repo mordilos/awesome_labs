@@ -221,6 +221,9 @@ func (m *Manager) ensure(ctx context.Context, env Env, log io.Writer) error {
 	if err := lima.Available(); err != nil {
 		return err
 	}
+	if env.Profile == exercise.ProfileOffsec {
+		return m.ensureOffsec(ctx, env, log)
+	}
 	all, err := lima.List(ctx)
 	if err != nil {
 		return err
@@ -531,6 +534,9 @@ func (m *Manager) Reset(ctx context.Context, env Env, log io.Writer) error {
 }
 
 func (m *Manager) reset(ctx context.Context, env Env, log io.Writer) error {
+	if err := m.CheckIsolation(ctx, env); err != nil {
+		return err
+	}
 	fmt.Fprintf(log, "==> resetting %s\n", env.Title)
 	switch env.Profile {
 	case exercise.ProfileDocker:
@@ -807,6 +813,9 @@ func (m *Manager) Check(ctx context.Context, ex *exercise.Exercise, log io.Write
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	env := EnvFor(ex.Profile)
+	if err := m.CheckIsolation(ctx, env); err != nil {
+		return false, err
+	}
 	all, err := lima.List(ctx)
 	if err != nil {
 		return false, err
@@ -848,6 +857,9 @@ func (m *Manager) Solve(ctx context.Context, ex *exercise.Exercise, log io.Write
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	env := EnvFor(ex.Profile)
+	if err := m.CheckIsolation(ctx, env); err != nil {
+		return err
+	}
 	if strings.TrimSpace(ex.Solve) == "" {
 		return fmt.Errorf("%s has no solve script", ex.ID)
 	}
@@ -932,8 +944,12 @@ func (m *Manager) takeClean(env Env) bool {
 // ---- helpers ----
 
 func resetSSHMux(name string) {
-	home, _ := os.UserHomeDir()
-	cfg := filepath.Join(home, ".lima", name, "ssh.config")
+	limaHome := os.Getenv("LIMA_HOME")
+	if limaHome == "" {
+		home, _ := os.UserHomeDir()
+		limaHome = filepath.Join(home, ".lima")
+	}
+	cfg := filepath.Join(limaHome, name, "ssh.config")
 	_ = exec.Command("ssh", "-F", cfg, "-O", "exit", "lima-"+name).Run()
 }
 

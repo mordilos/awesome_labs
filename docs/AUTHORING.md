@@ -42,6 +42,10 @@ control plane, `KUBECONFIG` is `/etc/kubernetes/admin.conf`; the lab user has it
    snapshotted paths, sysctls, kube-system edits) must register a clean-up with
    `on_reset 'command'` in `setup`.
 5. Prefer pre-pulled images (`vms/kit/images.txt`). Don't use `:latest`.
+6. The `offsec` profile runs without outbound network access after provisioning,
+   including when scripts run as root. Add packages and images required by offsec
+   or defensive exercises to `vms/bootstrap/offsec.sh` or `vms/offsec.yaml`.
+   Exercise setup must not depend on downloads. Use guest-local target addresses.
 
 ## What the reset restores
 

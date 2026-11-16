@@ -46,9 +46,30 @@ Difficulty rises through each module (1 = beginner … 5 = expert), mixing **bui
 
 ## Responsible use
 
-The offensive-security exercises are for learning, and they are self-contained: every
-target runs on the lab's own VM and nothing reaches the outside network. Only use these
-techniques on systems you own or are explicitly authorized to test.
+The offensive-security exercises are for learning. Only use these techniques on systems
+you own or are explicitly authorized to test.
+
+The `offsec` VM (also used by the defensive-security track) uses QEMU on both Linux
+and macOS. Its first boot downloads trusted packages and target images with network
+access. Before any exercise runs, awesome_labs stops it and reboots it with QEMU's
+`restrict=on` network and external IPv6 disabled. The guest cannot initiate connections
+to the workstation, LAN or Internet, even as guest root. Only the localhost SSH forward
+used to manage the VM remains. Guest-local networking and container-to-container
+networking still work. Automatic port forwarding, host DNS forwarding, shared mounts,
+SSH-agent forwarding and X11 forwarding are disabled.
+
+Start this VM through awesome_labs: starting it directly with `limactl` bypasses the
+QEMU launcher. The app checks the host QEMU process before running exercises, checks,
+solutions, resets or interactive shells, and refuses an unrestricted VM. This is a
+network boundary, not protection against vulnerabilities in QEMU or Lima themselves.
+Docker and Kubernetes lab environments retain their normal networking.
+
+Existing security VMs, and VMs whose initial provisioning was interrupted, must be
+rebuilt with `awesome_labs env rebuild offsec` (this deletes their contents). They are
+never reconnected online for repair. Exercise-time package downloads will fail; add
+dependencies to provisioning instead. Shared Lima `default.yaml` or `override.yaml`
+settings are rejected for this environment; use a separate `LIMA_HOME` without them.
+See [the isolation validation guide](docs/ISOLATION.md) for verification steps.
 
 ## The lab environments
 
@@ -79,7 +100,8 @@ confirmed working.
 `awesome_labs install` detects macOS or Linux and sets up what's missing: Lima (Homebrew
 on macOS when available, otherwise the official release, checksum-verified, into
 `~/.local`), QEMU with its firmware on Ubuntu, Debian, Fedora, Arch or openSUSE (through
-their package manager, which asks for sudo), and the binary itself in `~/.local/bin`. It shows the plan and asks first; `--dry-run` only
+their package manager, which asks for sudo), QEMU via Homebrew on macOS for the security
+labs, and the binary itself in `~/.local/bin`. It shows the plan and asks first; `--dry-run` only
 shows the plan.
 
 - macOS (Apple Silicon or Intel) or Linux with [Lima](https://lima-vm.io) ≥ 2.0
@@ -88,6 +110,8 @@ shows the plan.
     to avoid a [QEMU crash on Lima's `user-v2` network](https://github.com/lima-vm/lima/issues/5722).
     Starting the `kl-cp` or `kl-worker` VMs with `limactl` directly skips it.
 - Go ≥ 1.27 to build
+- QEMU for the security labs on macOS too (`brew install qemu`; installed by
+  `awesome_labs install` when Homebrew is available)
 - ~6 GiB of free RAM (one environment at a time; ~9 GiB with both), ~40 GiB of disk
 - Internet access (packages and images are downloaded on first start)
 

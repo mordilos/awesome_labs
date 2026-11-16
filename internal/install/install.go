@@ -246,6 +246,14 @@ func (in *installer) plan(st state) ([]step, error) {
 			return in.exec(true, p.Install[0], args...)
 		}})
 	}
+	if in.sys.OS == "darwin" && !st.qemu {
+		if !st.brew {
+			return nil, fmt.Errorf("offsec isolation requires QEMU: install QEMU (for example with Homebrew: brew install qemu), then run this again")
+		}
+		steps = append(steps, step{"install QEMU for isolated security labs with Homebrew (brew install qemu)", func() error {
+			return in.exec(false, "brew", "install", "qemu")
+		}})
+	}
 	return steps, nil
 }
 
@@ -459,7 +467,7 @@ func Run(args []string, in io.Reader, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "Detected %s on %s\n", name, sys.Arch)
 
-	st := state{lima: limaUsable(), qemu: found(qemuBinary(sys)) && found("qemu-img") && found("ssh") && firmwareFound(sys.Arch), brew: found("brew")}
+	st := state{lima: limaUsable(), qemu: found(qemuBinary(sys)) && found("qemu-img") && found("ssh") && (sys.OS == "darwin" || firmwareFound(sys.Arch)), brew: found("brew")}
 	steps, err := inst.plan(st)
 	if err != nil {
 		return err

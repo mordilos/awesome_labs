@@ -232,6 +232,9 @@ func run(args []string) error {
 		case "offsec":
 			env = lab.OffsecEnv
 		}
+		if err := mgr.CheckIsolation(ctx, env); err != nil {
+			return err
+		}
 		c := mgr.ShellCommand(env, worker)
 		return c.Run()
 	case "status":

@@ -84,11 +84,14 @@ func TestPlan(t *testing.T) {
 	if got := desc(fedora, state{}); !strings.Contains(got, "download Lima") || !strings.Contains(got, "dnf") {
 		t.Errorf("fedora: %q", got)
 	}
-	if got := desc(mac, state{brew: true}); !strings.Contains(got, "Homebrew") || strings.Contains(got, "QEMU") {
+	if got := desc(mac, state{brew: true}); !strings.Contains(got, "Homebrew") || !strings.Contains(got, "QEMU") {
 		t.Errorf("mac with brew: %q", got)
 	}
-	if got := desc(mac, state{}); !strings.Contains(got, "download Lima") {
+	if got := desc(mac, state{qemu: true}); !strings.Contains(got, "download Lima") {
 		t.Errorf("mac without brew: %q", got)
+	}
+	if _, err := (&installer{sys: mac}).plan(state{}); err == nil {
+		t.Fatal("missing macOS QEMU and package manager must be reported")
 	}
 }
 

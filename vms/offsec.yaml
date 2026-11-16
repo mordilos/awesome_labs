@@ -1,13 +1,26 @@
 # kubelab offensive-security lab. Placeholders are substituted by kubelab.
 # A single Ubuntu host that is both the attacker box (nmap, hydra, john, curl,
 # python) and the home for deliberately vulnerable target containers/services.
-# Everything the exercises attack runs on this VM; nothing reaches the network.
+# QEMU's host-side launcher restricts networking after first-time provisioning.
 minimumLimaVersion: 2.0.0
+vmType: qemu
 base: template:_images/ubuntu-24.04
 cpus: __CPUS__
 memory: __MEMORY__
 disk: 40GiB
 mounts: []
+networks: []
+hostResolver:
+  enabled: false
+ssh:
+  forwardAgent: false
+  forwardX11: false
+  forwardX11Trusted: false
+portForwards:
+- guestIP: 0.0.0.0
+  guestIPMustBeZero: false
+  proto: any
+  ignore: true
 containerd:
   system: false
   user: false
