@@ -13,16 +13,22 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"awesome_labs/internal/config"
+	"awesome_labs/internal/doctor"
 	"awesome_labs/internal/exam"
 	"awesome_labs/internal/exercise"
 	"awesome_labs/internal/install"
 	"awesome_labs/internal/lab"
 	"awesome_labs/internal/progress"
 	"awesome_labs/internal/tui"
+	"awesome_labs/internal/update"
 )
+
+// version is set at build time (make build / make release); "dev" otherwise.
+var version = "dev"
 
 //go:embed all:vms all:exercises learning-paths.yaml
 var assets embed.FS
@@ -43,11 +49,15 @@ usage:
   awesome_labs check <id>              check your work
   awesome_labs forget <id>             erase your progress on an exercise
   awesome_labs shell [docker|k8s|node01|offsec]  open a shell in a lab VM
-  awesome_labs env status|up|stop|destroy|rebuild|reset [docker|k8s|offsec]
+  awesome_labs code [docker|k8s|node01|offsec]   work on the lab's /lab in your own VS Code
+  awesome_labs sync [docker|k8s|node01|offsec]   mirror a lab VM's /lab into a local folder (VS Code runs this)
+  awesome_labs env status|up|prepare|stop|destroy|rebuild|reset|cache [docker|k8s|offsec]
   awesome_labs vms [stop|delete <name|all>]  list lab VMs, or stop/delete them
   awesome_labs verify [-from id] [ids or prefixes...]
                                   author tool: setup -> check fails -> solve -> check passes
   awesome_labs lint                    validate all exercise files
+  awesome_labs doctor [--fix]          check this machine and awesome_labs for the usual trouble
+  awesome_labs version [--check]       this build's version (--check: is a newer release out?)
 
 environment:
   AWESOME_LABS_EXERCISES=dir           load exercises from disk instead of the built-in set
@@ -82,13 +92,14 @@ func run(args []string) error {
 		return err
 	}
 	// only one awesome_labs changes the VMs and the progress at a time; the
-	// read-only commands may run beside it
+	// read-only commands may run beside it, and so may a shell and the VS Code
+	// sync, which only work inside /lab of a running VM
 	cmd := ""
 	if len(args) > 0 {
 		cmd = args[0]
 	}
 	switch cmd {
-	case "-h", "--help", "help", "lint", "list", "show", "status", "paths":
+	case "-h", "--help", "help", "lint", "list", "show", "status", "paths", "shell", "code", "sync", "doctor", "version":
 	default:
 		release, err := mgr.LockApp()
 		if err != nil {
@@ -101,7 +112,7 @@ func run(args []string) error {
 		return err
 	}
 	cfg, err := config.Load(mgr.StateDir)
-	if err != nil {
+	if err != nil && cmd != "doctor" { // doctor reports it
 		return err
 	}
 	lab.ApplySizes([2]string{itoa(cfg.Docker.CPUs), cfg.Docker.Memory},
@@ -122,7 +133,12 @@ func run(args []string) error {
 
 	if len(args) == 0 {
 		mgr.AutoStop = cfg.AutoStopEnabled()
-		return tui.Run(tui.Deps{Catalog: cat, Manager: mgr, Progress: prog, Paths: paths, Exams: exams})
+		notes, err := progress.OpenNotes(mgr.StateDir)
+		if err != nil {
+			return fmt.Errorf("notes: %w", err)
+		}
+		return tui.Run(tui.Deps{Catalog: cat, Manager: mgr, Progress: prog, Paths: paths, Exams: exams, Notes: notes,
+			OnExit: cfg.ExitAction(), AutoCheck: cfg.AutoCheck, CheckUpdates: cfg.CheckUpdates, Theme: cfg.Theme, Version: version})
 	}
 	cmd, rest := args[0], args[1:]
 	get := func() (*exercise.Exercise, error) {
@@ -138,6 +154,32 @@ func run(args []string) error {
 	switch cmd {
 	case "-h", "--help", "help":
 		usage()
+	case "version":
+		fmt.Println("awesome_labs " + version)
+		if len(rest) > 0 && rest[0] == "--check" {
+			r, err := update.Latest(ctx)
+			if err != nil {
+				return fmt.Errorf("checking for a newer release: %w", err)
+			}
+			if update.Newer(version, r.Tag) {
+				fmt.Printf("%s is out: %s\n", r.Tag, r.URL)
+			} else {
+				fmt.Printf("up to date (latest release: %s)\n", r.Tag)
+			}
+		}
+	case "doctor":
+		if len(rest) > 0 && rest[0] == "--fix" {
+			mgr.ClearStaleBusy()
+		}
+		fmt.Printf("awesome_labs %s — checking this machine\n", version)
+		fs := doctor.Check(ctx, mgr, doctor.System(mgr), version)
+		if _, err := config.Load(mgr.StateDir); err != nil {
+			fs = append(fs, doctor.Finding{Level: doctor.Bad, Title: "the config file has a problem", Detail: err.Error(), Fix: "edit " + config.Path(mgr.StateDir)})
+		}
+		fmt.Printf("  · logs: %s\n", mgr.LogPath())
+		if doctor.Print(os.Stdout, fs) == doctor.Bad {
+			return fmt.Errorf("found problems that stop the labs from working")
+		}
 	case "lint":
 		fmt.Printf("%d exercises OK\n", len(cat.Exercises))
 		counts := map[string]int{}
@@ -188,6 +230,12 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
+		// every start resets the VMs, so they hold the lab of the exercise set
+		// up last: checking another one grades the wrong lab, and a pass
+		// would mark it solved without it ever being done
+		if err := checkable(mgr, ex); err != nil {
+			return err
+		}
 		ok, err := mgr.Check(ctx, ex, os.Stdout)
 		if err != nil {
 			return err
@@ -210,6 +258,7 @@ func run(args []string) error {
 			return nil
 		}
 		prog.Reset(ex.ID)
+		mgr.ForgetHistory(ex.ID)
 		fmt.Printf("forgot progress on %s\n", ex.ID)
 	case "solve":
 		ex, err := get()
@@ -237,6 +286,33 @@ func run(args []string) error {
 		}
 		c := mgr.ShellCommand(env, worker)
 		return c.Run()
+	case "code", "sync":
+		name := ""
+		if len(rest) > 0 {
+			name = rest[0]
+		} else if a, ok := mgr.Active(); ok { // default: where the exercise you're on runs
+			name = lab.CodeTargetOf(lab.EnvFor(a.Profile)).Name
+		}
+		t, err := lab.CodeTargetFor(name)
+		if err != nil {
+			return err
+		}
+		if cmd == "sync" {
+			sctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM) // the app's Stop VS Code
+			defer stop()
+			return mgr.SyncLab(sctx, t, os.Stdout)
+		}
+		ws, err := mgr.OpenInCode(t)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("opened %s in VS Code\n", ws)
+		fmt.Printf("  %s mirrors %s:/lab both ways while the window is open (task \"awesome_labs: sync /lab\";\n", mgr.CodeDir(t), t.VM.Hostname)
+		fmt.Printf("  allow it if VS Code asks), and its terminal opens in the VM.\n")
+		if !mgr.VMRunning(t.Env, t.Worker) {
+			fmt.Printf("  %s isn't running yet: the folder fills in once it is (awesome_labs start <id>).\n", t.VM.Hostname)
+		}
+		return nil
 	case "status":
 		return statusCmd(ctx, cat, mgr, prog)
 	case "vms":
@@ -252,6 +328,18 @@ func run(args []string) error {
 	default:
 		usage()
 		return fmt.Errorf("unknown command %q", cmd)
+	}
+	return nil
+}
+
+// checkable refuses a check of an exercise whose lab is not the one set up.
+func checkable(mgr *lab.Manager, ex *exercise.Exercise) error {
+	a, ok := mgr.Active()
+	switch {
+	case !ok:
+		return fmt.Errorf("no lab is set up — run: awesome_labs start %s", ex.ID)
+	case a.ID != ex.ID:
+		return fmt.Errorf("the VMs hold the lab of %s, not %s — check %s, or run: awesome_labs start %s", a.ID, ex.ID, a.ID, ex.ID)
 	}
 	return nil
 }
@@ -376,6 +464,11 @@ func envCmd(ctx context.Context, mgr *lab.Manager, args []string) error {
 		}
 	}
 	mgr.Verbose = os.Getenv("AWESOME_LABS_VERBOSE") != ""
+	if args[0] == "cache" && len(args) == 1 {
+		fmt.Print(mgr.CacheSummary())
+		fmt.Println("fill it with: awesome_labs env cache docker|k8s|offsec")
+		return nil
+	}
 	for _, env := range envs {
 		var err error
 		switch args[0] {
@@ -389,8 +482,12 @@ func envCmd(ctx context.Context, mgr *lab.Manager, args []string) error {
 			err = mgr.Destroy(ctx, env, os.Stdout)
 		case "rebuild":
 			err = mgr.Rebuild(ctx, env, os.Stdout)
+		case "prepare":
+			err = mgr.Prepare(ctx, env, os.Stdout)
 		case "reset":
 			err = mgr.Reset(ctx, env, os.Stdout)
+		case "cache":
+			err = mgr.CacheEnv(ctx, env, os.Stdout)
 		default:
 			return fmt.Errorf("unknown env action %q", args[0])
 		}

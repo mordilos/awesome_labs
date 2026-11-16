@@ -85,6 +85,8 @@ func keyMsg(k string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyF1}
 	case "tab":
 		return tea.KeyMsg{Type: tea.KeyTab}
+	case "space":
+		return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
 	case "up":
 		return tea.KeyMsg{Type: tea.KeyUp}
 	case "down":
@@ -167,6 +169,13 @@ func (m *model) menus() []menu {
 			head("Jump", ""),
 			menuItem{label: "Next module", key: "n", run: press("n")},
 			menuItem{label: "Previous module", key: "p", run: press("p")},
+			head("Your progress", ""),
+			menuItem{label: "Weak spots…", key: "W", run: press("W")},
+			menuItem{label: "Mark / unmark for reset", key: "space", run: press("space")}.off(len(m.visible) == 0, "the list is empty"),
+			menuItem{label: "Mark all shown", key: "*", run: press("*")}.off(len(m.visible) == 0, "the list is empty"),
+			menuItem{label: m.resetItemLabel(), key: "R", run: press("R")}.off(len(m.visible) == 0, "the list is empty"),
+			menuItem{label: "Reset progress of all shown…", run: m.askResetShown}.off(len(m.visible) == 0, "the list is empty"),
+			menuItem{label: "Clear the marks", key: "esc", hidden: len(m.marked) == 0 || m.filter.Value() != "", run: func() tea.Cmd { m.marked = nil; return nil }},
 			head("Learning path", ""),
 			menuItem{label: "Choose a learning path…", key: "L", run: func() tea.Cmd { m.screen = scrPaths; return nil }},
 			menuItem{label: "Clear the learning path", hidden: m.path == nil, run: func() tea.Cmd {
@@ -195,7 +204,7 @@ func (m *model) menus() []menu {
 		{label: "Keyboard shortcuts", key: "F1", run: func() tea.Cmd { m.modal = shortcutsText; return nil }},
 		{label: "Using the mouse", run: func() tea.Cmd { m.modal = mouseText; return nil }},
 		sep(),
-		{label: "About awesome_labs", run: func() tea.Cmd { m.modal = aboutText; return nil }},
+		{label: "About awesome_labs", run: func() tea.Cmd { m.modal = m.aboutText(); return nil }},
 	}}
 
 	var out []menu
@@ -255,9 +264,11 @@ func visibleItems(items []menuItem) []menuItem {
 	return out
 }
 
-// quitAndStop is every way out of the app: it deletes every lab VM, running
-// or stopped (none should be left by then), then quits. While an operation is
-// running it refuses; ctrl+c then quits at once and leaves the VMs as they are.
+// quitAndStop is every way out of the app. By default (on_exit: delete) it
+// deletes every lab VM, running or stopped, then quits; with on_exit: stop it
+// stops them and with keep it leaves them running, keeping the exercise you
+// are on set up for next time. While an operation is running it refuses;
+// ctrl+c then quits at once and leaves the VMs as they are.
 func (m *model) quitAndStop() tea.Cmd {
 	if m.quitting {
 		return nil
@@ -267,6 +278,17 @@ func (m *model) quitAndStop() tea.Cmd {
 		return nil
 	}
 	m.quitting = true
+	switch m.onExit {
+	case "keep":
+		m.flash = "leaving the lab VMs running…"
+		return func() tea.Msg { m.mgr.StopAllCode(); return stoppedMsg{} }
+	case "stop":
+		m.flash = "stopping the lab VMs…"
+		return func() tea.Msg {
+			m.mgr.StopAllCode()
+			return stoppedMsg{m.stopVMs(context.Background(), io.Discard)}
+		}
+	}
 	m.flash = "deleting all lab VMs…"
 	return func() tea.Msg { return stoppedMsg{m.deleteVMs(context.Background(), io.Discard)} }
 }
@@ -619,6 +641,8 @@ func (m *model) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, m.clickRow(n, double)
 	case id == "filter":
 		return m, m.press("/")
+	case id == "alltracks":
+		m.allTracks()
 	}
 	return m, nil
 }
@@ -941,15 +965,19 @@ Everywhere      F10 menu bar (not on the exercise screen) · alt+p/v/t/h open a 
                 a active exercise · S started labs · e environments & VMs
                 Q (q on the list) exit and delete all lab VMs · ctrl+c the same; while busy or deleting, exit at once
 
-Exercise list   ↑↓ move · enter open · / filter · esc clear filter
-                tab next track · n/p next/previous module
+Exercise list   ↑↓ move · enter open · / filter (ctrl+t: search the full text) · esc clear filter
+                tab next track · A all tracks · n/p next/previous module
                 u cycle all / solved / in progress / no progress
-                L learning paths · X exam · q quit
+                space mark/unmark · * mark all shown (again: clear) · esc clear marks
+                R reset progress of the marked exercises (none marked: the highlighted one)
+                L learning paths · X exam · W weak spots · q quit
 
-Exercise        s start the lab · t terminal · w node01 terminal (Kubernetes)
-                c check · h next hint · v solution · R reset progress
-                ←→, tab or 1–5 switch tabs · n/N next/previous in the list it came from
-                esc/q back — leaving the lab that is set up cleans its VMs for the next one
+Exercise        s start the lab · t terminal · w node01 terminal (Kubernetes) · o open in VS Code (o again stops its sync)
+                c check · A auto-check on/off · h next hint · v solution · x end the exercise (cleans its VMs) · R reset progress
+                y copy a code block (again: the next one) · Notes tab: enter edits, esc saves
+                enter after a pass opens the suggested next exercise
+                ←→, tab or 1–6 switch tabs · n/N next/previous in the list it came from
+                esc/q back — the lab that is set up keeps running; a goes back to it
 
 Started labs    ↑↓ move · enter open · r reset selected · A reset all · esc back
 Learning paths  ↑↓ move · enter apply · esc back
@@ -957,7 +985,7 @@ Exam            setup: ↑↓ field · ←→ change · enter start
                 running: ↑↓ move · enter open question · F finish · esc list (timer runs)
                 result: ↑↓ move · o open question (solutions unlocked) · esc list
 
-Environments    ↑↓ select · u start · x stop · R reset VMs · B rebuild · D delete
+Environments    ↑↓ select · u start · x stop · R reset VMs · P prepare · B rebuild · D delete
                 X stop all · K delete all · r refresh · esc back
 
 Menus           ←→ switch menu · ↑↓ move · enter choose · esc close
@@ -978,10 +1006,31 @@ const mouseText = `Using the mouse
 
 Most terminals select text with shift+drag while the mouse is in use.`
 
-const aboutText = `awesome_labs
+const aboutText = `awesome_labs %s
 
 Hands-on labs on your own machine for Docker, Kubernetes, Linux,
-networking, cloud, data, security, programming and data science.
+networking, cloud, data, security, programming, algorithms, data
+science, Git, Terraform and Ansible.
 Real Lima VMs, real breakage, automatic grading.
 
 https://github.com/kpatr1981/awesome_labs`
+
+func (m *model) aboutText() string {
+	v := m.version
+	if v == "" {
+		v = "dev"
+	}
+	s := fmt.Sprintf(aboutText, v)
+	if m.newRelease != "" {
+		s += "\n\n" + m.newRelease
+	}
+	return s
+}
+
+// resetItemLabel names what R on the exercise list would reset.
+func (m *model) resetItemLabel() string {
+	if n := len(m.marked); n > 0 {
+		return fmt.Sprintf("Reset progress of %d marked…", n)
+	}
+	return "Reset progress of this one…"
+}

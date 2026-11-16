@@ -66,3 +66,17 @@ paths:
   description: The multi-problem end-of-module incidents — the hardest exercises in each area.
   include:
   - tags: [incident, capstone]
+
+- id: terraform-fundamentals
+  title: Terraform fundamentals
+  description: Plan and apply, variables and expressions, state, modules and real Docker infrastructure.
+  include:
+  - track: terraform
+    max_difficulty: 3
+
+- id: ansible-fundamentals
+  title: Ansible fundamentals
+  description: Inventories, playbooks, templates, variables, Vault and roles against SSH-managed servers.
+  include:
+  - track: ansible
+    max_difficulty: 3

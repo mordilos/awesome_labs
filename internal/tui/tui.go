@@ -5,11 +5,15 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -42,9 +46,10 @@ const (
 	tabHints
 	tabSolution
 	tabOutput
+	tabNotes
 )
 
-var tabNames = []string{"Scenario", "Learn", "Hints", "Solution", "Output"}
+var tabNames = []string{"Scenario", "Learn", "Hints", "Solution", "Output", "Notes"}
 
 // ---- messages ----
 
@@ -60,6 +65,7 @@ type envStatusMsg struct {
 	vms    map[string]lab.VMInfo
 }
 type shellDoneMsg struct{ err error }
+type updateMsg struct{ tag, url string }
 type tickMsg time.Time
 type stoppedMsg struct{ err error }
 
@@ -82,6 +88,8 @@ type model struct {
 	visible    []*exercise.Exercise
 	cursor     int
 	offset     int
+	marked     map[string]bool // exercises picked with space for a reset
+	saved      uiState         // the list state last written to ui.json
 
 	// detail
 	cur       *exercise.Exercise
@@ -95,13 +103,39 @@ type model struct {
 	onNo      func() tea.Cmd
 
 	// operations
-	op     string // running operation label, "" = idle
-	opID   string
-	opCh   chan tea.Msg
-	output map[string]*strings.Builder // per exercise id / "env"
-	result map[string]string           // last check result per id
-	spin   spinner.Model
-	flash  string
+	op      string // running operation label, "" = idle
+	opID    string
+	opCh    chan tea.Msg
+	output  map[string]*strings.Builder // per exercise id / "env"
+	result  map[string]string           // last check result per id
+	spin    spinner.Model
+	flash   string
+	run     opRun            // progress of the running operation
+	now     func() time.Time // the clock; tests replace it
+	quiet   bool             // the next operation doesn't switch to the Output tab
+	autoRun bool             // the running check was started by auto-check
+
+	// notes, copying, history, suggestions
+	notes        *progress.Notes
+	note         textarea.Model
+	noteEdit     bool
+	clip         func(string) error // the clipboard; tests replace it
+	copyKey      string
+	copyIdx      int
+	fetchHistory func(*exercise.Exercise)
+	suggest      *exercise.Exercise // offered after a pass: enter opens it
+	suggestFlash string             // the flash that offers it: once another replaces it, enter no longer jumps
+	fullText     bool               // the filter searches scenarios and tutorials too
+	textIndex    map[string]string
+
+	// settings
+	onExit       string // delete, stop or keep
+	autoCheck    bool
+	pushSeen     time.Time // the last VS Code save auto-check saw
+	checkDue     time.Time // when the pending auto-check runs
+	checkUpdates bool
+	version      string
+	newRelease   string // "v0.19.0 is out: <url>", once known
 
 	// env screen
 	envStatus map[exercise.Profile]string
@@ -112,6 +146,16 @@ type model struct {
 	endLab func(ctx context.Context, ex *exercise.Exercise, w io.Writer) error
 	// deleteVMs deletes every lab VM, on start and on exit; tests replace it
 	deleteVMs func(ctx context.Context, w io.Writer) error
+	// stopVMs stops every lab VM, on exit with on_exit: stop; tests replace it
+	stopVMs func(ctx context.Context, w io.Writer) error
+	// check grades an exercise on its VMs; tests replace it
+	check func(ctx context.Context, ex *exercise.Exercise, w io.Writer) (bool, error)
+	// unprepared lists the environments with no saved copy yet, for the
+	// first-launch offer to build them; tests replace it
+	unprepared func(ctx context.Context) []lab.Env
+	prepOffer  []lab.Env // set by the start-up cleanup: environments to offer building
+	// prepare builds an environment and keeps its saved copy; tests replace it
+	prepare func(ctx context.Context, env lab.Env, w io.Writer) error
 
 	// the one exercise set up on the VMs right now
 	active    lab.Active
@@ -172,14 +216,18 @@ type Deps struct {
 	Progress *progress.Store
 	Paths    []*exercise.Path
 	Exams    *exam.Store
+	Notes    *progress.Notes
+
+	OnExit       string // delete (default), stop or keep
+	AutoCheck    bool
+	CheckUpdates bool
+	Theme        string // auto, dark or light
+	Version      string
 }
 
 // Run starts the TUI.
 func Run(d Deps) error {
-	style := "dark"
-	if !lipgloss.HasDarkBackground() {
-		style = "light"
-	}
+	style := applyTheme(d.Theme)
 	m := newModel(d, style)
 	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseAllMotion()).Run()
 	return err
@@ -195,25 +243,53 @@ func newModel(d Deps, style string) *model {
 	sp.Style = lipgloss.NewStyle().Foreground(colAccent)
 	m := &model{
 		cat: cat, mgr: mgr, prog: prog,
-		tracks: []string{"", "docker", "kubernetes", "offsec", "linux", "networking", "cloud", "data", "defensive", "programming", "datascience"},
+		tracks: []string{"", "docker", "kubernetes", "offsec", "linux", "networking", "cloud", "data", "defensive", "programming", "datascience", "git", "terraform", "ansible", "algorithms"},
 		filter: ti, spin: sp, style: style,
 		output: map[string]*strings.Builder{}, result: map[string]string{},
 		mdCache: map[string]string{}, envStatus: map[exercise.Profile]string{},
 		paths: d.Paths, exams: d.Exams, setupCount: 1, setupMins: 1, menuOpen: -1,
+		now: time.Now, notes: d.Notes, note: newNoteArea(), clip: copyToClipboard,
+		textIndex: map[string]string{}, onExit: d.OnExit, autoCheck: d.AutoCheck,
+		checkUpdates: d.CheckUpdates, version: d.Version,
 	}
+	if m.notes == nil {
+		m.notes, _ = progress.OpenNotes(mgr.StateDir)
+	}
+	if m.onExit == "" {
+		m.onExit = "delete"
+	}
+	m.fetchHistory = func(ex *exercise.Exercise) { mgr.FetchHistory(context.Background(), ex) }
+	m.pushSeen = time.Now() // auto-check reacts to saves made from now on
+	m.filter.Placeholder = m.filterPlaceholder()
 	m.endLab = mgr.EndExercise
 	m.deleteVMs = mgr.DeleteAll
+	m.stopVMs = mgr.StopAll
+	m.check = mgr.Check
+	m.prepare = mgr.Prepare
+	m.unprepared = func(ctx context.Context) []lab.Env {
+		var out []lab.Env
+		for _, env := range lab.AllEnvs() {
+			if !mgr.HasBase(ctx, env) {
+				out = append(out, env)
+			}
+		}
+		return out
+	}
 	m.exam = d.Exams.Current()
 	if m.exam != nil && m.exam.Over() {
 		m.finishExam()
 	}
 	m.trackIDs = map[string][]string{}
 	for _, e := range cat.Exercises {
+		if _, ok := m.trackIDs[e.Track]; !ok && !slices.Contains(m.tracks, e.Track) {
+			m.tracks = append(m.tracks, e.Track) // tracks beyond the built-in order, as they appear
+		}
 		m.trackIDs[e.Track] = append(m.trackIDs[e.Track], e.ID)
 		m.trackIDs[""] = append(m.trackIDs[""], e.ID)
 	}
 	m.refreshActive()
 	m.refilter()
+	m.loadUI()
 	return m
 }
 
@@ -227,15 +303,27 @@ func (m *model) isActive(ex *exercise.Exercise) bool {
 // Init starts by deleting every lab VM left over from an earlier run,
 // running or stopped: exiting deletes them, so any still there were left by a
 // crash or a ctrl+c while busy. No exercise is set up on the VMs after it.
+//
+// With on_exit set to stop or keep, the VMs were left on purpose: nothing is
+// deleted and the exercise you were on is still set up.
 func (m *model) Init() tea.Cmd {
-	cleanup := m.startOp("cleanup", "Deleting leftover lab VMs", "env", func(ctx context.Context, w io.Writer) (bool, error) {
-		if err := m.deleteVMs(ctx, w); err != nil {
-			return false, err
+	label := "Deleting leftover lab VMs"
+	if m.onExit != "delete" {
+		label = "Looking at the lab VMs"
+	}
+	cleanup := m.startOp("cleanup", label, "env", func(ctx context.Context, w io.Writer) (bool, error) {
+		if m.onExit == "delete" {
+			if err := m.deleteVMs(ctx, w); err != nil {
+				return false, err
+			}
+			m.mgr.ClearActive("")
 		}
-		m.mgr.ClearActive("")
+		if !m.prepareOffered() && m.unprepared != nil {
+			m.prepOffer = m.unprepared(ctx) // read by Update once this op is done
+		}
 		return false, nil
 	})
-	return tea.Batch(m.spin.Tick, tick(), cleanup)
+	return tea.Batch(m.spin.Tick, tick(), cleanup, m.cmdCheckUpdates())
 }
 
 func tick() tea.Cmd {
@@ -293,6 +381,9 @@ func (m *model) refilter() {
 		}
 		if q != "" {
 			hay := strings.ToLower(e.ID + " " + e.Title + " " + e.Module + " " + e.Kind + " " + strings.Join(e.Tags, " ") + " " + exercise.DifficultyLabel(e.Difficulty))
+			if m.fullText {
+				hay += " " + m.fullTextOf(e)
+			}
 			ok := true
 			for _, w := range strings.Fields(q) {
 				if !strings.Contains(hay, w) {
@@ -306,10 +397,31 @@ func (m *model) refilter() {
 		}
 		m.visible = append(m.visible, e)
 	}
+	m.pruneMarks()
 	if m.cursor >= len(m.visible) {
 		m.cursor = max(0, len(m.visible)-1)
 	}
 	m.clampOffset()
+}
+
+// allTracks drops the track filter, keeping the others.
+func (m *model) allTracks() {
+	m.trackIdx, m.cursor, m.offset = 0, 0, 0
+	m.refilter()
+}
+
+// hiddenByTrack counts the exercises the current filters would show if no
+// track were picked: what an empty list is hiding in the other tracks.
+func (m *model) hiddenByTrack() int {
+	if m.tracks[m.trackIdx] == "" {
+		return 0
+	}
+	idx, vis, cur, off := m.trackIdx, m.visible, m.cursor, m.offset
+	m.trackIdx, m.visible = 0, nil
+	m.refilter()
+	n := len(m.visible)
+	m.trackIdx, m.visible, m.cursor, m.offset = idx, vis, cur, off
+	return n - len(vis)
 }
 
 func (m *model) listHeight() int {
@@ -321,7 +433,7 @@ func (m *model) listHeight() int {
 
 // hasBrowseBar reports whether the browse screen shows its info line above the list.
 func (m *model) hasBrowseBar() bool {
-	return m.path != nil || m.progFilter != progAll || m.filterOn || m.filter.Value() != ""
+	return m.path != nil || m.tracks[m.trackIdx] != "" || m.progFilter != progAll || m.filterOn || m.filter.Value() != "" || len(m.marked) > 0
 }
 
 func (m *model) clampOffset() {
@@ -402,16 +514,25 @@ func (m *model) out(id string) *strings.Builder {
 func (m *model) startOp(kind, label, id string, f func(ctx context.Context, w io.Writer) (bool, error)) tea.Cmd {
 	if m.op != "" {
 		m.flash = "busy: " + m.op
+		m.quiet, m.autoRun = false, false
 		return nil
 	}
 	m.op, m.opID = label, id
+	what := id
+	if ex := m.cat.Get(id); ex != nil {
+		what = string(ex.Profile) // an exercise's start runs its environment
+	} else if id == "env" {
+		what = label
+	}
+	m.beginRun(kind + ":" + what)
 	ch := make(chan tea.Msg, 512)
 	m.opCh = ch
 	b := m.out(id)
 	b.Reset()
-	if m.screen == scrDetail {
+	if m.screen == scrDetail && !m.quiet && !m.noteEdit {
 		m.tab = tabOutput
 	}
+	m.quiet = false
 	m.refreshViewport(true)
 	go func() {
 		w := &chanWriter{ch: ch}
@@ -430,12 +551,13 @@ func (m *model) cmdStart() tea.Cmd {
 	})
 }
 
-func (m *model) cmdCheck() tea.Cmd {
-	ex := m.cur
+func (m *model) cmdCheck() tea.Cmd { return m.cmdCheckEx(m.cur) }
+
+func (m *model) cmdCheckEx(ex *exercise.Exercise) tea.Cmd {
 	return m.startOp("check", "Checking "+ex.ID, ex.ID, func(ctx context.Context, w io.Writer) (bool, error) {
 		fmt.Fprintf(w, "Checking %s — %s\n\n", ex.ID, ex.Title)
-		// the VMs stay up after a pass: leaving the exercise cleans them for the next one
-		return m.mgr.Check(ctx, ex, w)
+		// the VMs stay up after a pass: ending the exercise (x) cleans them for the next one
+		return m.check(ctx, ex, w)
 	})
 }
 
@@ -446,8 +568,7 @@ func (m *model) cmdShell(worker bool) tea.Cmd {
 		return nil
 	}
 	if !m.mgr.VMRunning(env, worker) {
-		m.flash = "the " + env.Title + " is not running — press s to prepare the lab first"
-		return nil
+		return m.cmdBoot(m.cur)
 	}
 	c := m.mgr.ShellCommand(env, worker)
 	c.Stdin, c.Stdout, c.Stderr = nil, nil, nil
@@ -457,6 +578,19 @@ func (m *model) cmdShell(worker bool) tea.Cmd {
 	}
 	m.flash = "returned from " + where + " shell — press c to check your work"
 	return tea.ExecProcess(c, func(err error) tea.Msg { return shellDoneMsg{err} })
+}
+
+// cmdBoot starts the stopped VMs of the active exercise again, keeping its
+// lab as it was (they were stopped by on_exit: stop, or by hand).
+func (m *model) cmdBoot(ex *exercise.Exercise) tea.Cmd {
+	env := lab.EnvFor(ex.Profile)
+	if !m.isActive(ex) {
+		m.flash = "the " + env.Title + " is not running — press s to prepare the lab first"
+		return nil
+	}
+	return m.startOp("boot", "Starting the "+env.Title+" again (your lab is kept)", ex.ID, func(ctx context.Context, w io.Writer) (bool, error) {
+		return false, m.mgr.Ensure(ctx, env, w)
+	})
 }
 
 func (m *model) cmdEnvStatus() tea.Cmd {
@@ -497,6 +631,8 @@ func (m *model) envAction(action string) tea.Cmd {
 		return run(func(ctx context.Context, w io.Writer) error { return m.mgr.Destroy(ctx, env, w) })
 	case "rebuild":
 		return run(func(ctx context.Context, w io.Writer) error { return m.mgr.Rebuild(ctx, env, w) })
+	case "prepare":
+		return m.cmdPrepare([]lab.Env{env})
 	case "stop-all":
 		return m.startOp("env", "Stopping all lab VMs", "env", func(ctx context.Context, w io.Writer) (bool, error) {
 			return false, m.mgr.StopAll(ctx, w)
@@ -511,12 +647,20 @@ func (m *model) envAction(action string) tea.Cmd {
 
 // ---- update ----
 
+// Update handles msg, then saves the list state if it changed, so a crash or
+// ctrl+c doesn't lose it either.
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	r, c := m.update(msg)
+	m.saveUI()
+	return r, c
+}
+
+func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		// m.h is the height below the menu bar
 		m.w, m.h = msg.Width, max(1, msg.Height-1)
-		m.vp.Width, m.vp.Height = m.w-2, max(3, m.h-7)
+		m.vp.Width, m.vp.Height = m.w-2, max(3, m.h-8)
 		m.clampOffset()
 		m.refreshViewport(false)
 		return m, nil
@@ -530,6 +674,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, c
 
 	case opLineMsg:
+		m.runLine(string(msg))
 		b := m.out(m.opID)
 		b.WriteString(string(msg))
 		b.WriteByte('\n')
@@ -540,6 +685,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case opDoneMsg:
 		m.op = ""
+		defer func() { m.autoRun = false }()
+		m.endRun(msg.err == nil)
 		m.refreshActive()
 		b := m.out(msg.id)
 		switch {
@@ -548,25 +695,43 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flash = "failed: " + msg.err.Error()
 		case msg.kind == "start":
 			m.prog.MarkStarted(msg.id)
-			m.refilter()
+			m.refilterKeep()
 			m.flash = "lab ready — press t to open a terminal"
 		case msg.kind == "check":
 			m.prog.RecordCheck(msg.id, msg.passed)
-			m.refilter()
+			m.refilterKeep()
 			if m.exam != nil && m.exam.Record(msg.id, msg.passed) {
 				_ = m.exams.Save(m.exam)
 			}
 			if msg.passed {
 				m.result[msg.id] = "passed"
 				m.flash = "✔ solved! great work"
+				m.suggest = nil
+				if m.cur != nil && m.cur.ID == msg.id && m.exam == nil {
+					if next := m.nextUnsolved(); next != nil {
+						m.suggest = next
+						m.flash = "✔ solved! next up: " + next.ID + " — " + trunc(next.Title, 40) + " · enter opens it"
+					}
+				}
 			} else {
 				m.result[msg.id] = "failed"
 				m.flash = "not yet — read the failing checks in Output"
 			}
+			if m.autoRun {
+				m.flash = "auto-check · " + m.flash
+			}
+			m.suggestFlash = m.flash
 		case msg.kind == "stop":
 			m.flash = msg.id + " ended — its VMs are cleaned for the next exercise"
 		case msg.kind == "cleanup":
 			m.flash = "no lab VMs left over"
+			if len(m.prepOffer) > 0 {
+				offer := m.prepOffer
+				m.prepOffer = nil
+				m.markPrepareOffered()
+				m.refreshViewport(true)
+				return m, m.offerPrepare(offer, nil)
+			}
 		case msg.kind == "env":
 			if msg.err == nil {
 				m.flash = "done"
@@ -582,6 +747,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.refreshActive()
+		if c := m.autoCheckTick(); c != nil {
+			return m, tea.Batch(tick(), c)
+		}
 		if m.exam != nil && m.exam.Over() && m.op == "" {
 			m.finishExam()
 			m.screen = scrExamResult
@@ -598,12 +766,30 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// bubbletea turns the mouse off while the shell has the terminal and
 		// doesn't turn it back on: without this the menus and buttons stop
 		// answering clicks
-		return m, tea.EnableMouseAllMotion
+		cmds := []tea.Cmd{tea.EnableMouseAllMotion, m.cmdFetchHistory(m.cur)}
+		if m.autoCheck && m.isActive(m.cur) && m.op == "" {
+			m.quiet = true
+			cmds = append(cmds, m.cmdCheck())
+		}
+		return m, tea.Batch(cmds...)
+
+	case historyMsg:
+		if m.screen == scrDetail && m.cur != nil && m.cur.ID == msg.id && m.tab == tabSolution {
+			m.refreshViewport(false)
+		}
+		return m, nil
+
+	case updateMsg:
+		m.newRelease = msg.tag + " is out: " + msg.url
+		return m, nil
 
 	case tea.MouseMsg:
 		return m.mouse(msg)
 
 	case tea.KeyMsg:
+		if m.noteEdit && m.screen == scrDetail && m.confirm == "" && m.modal == "" && msg.String() != "ctrl+c" {
+			return m, m.noteKey(msg)
+		}
 		if msg.String() == "ctrl+c" {
 			if m.op != "" || m.quitting { // nothing else gets out while busy
 				return m, tea.Quit
@@ -643,11 +829,17 @@ func (m *model) move(d int) {
 func (m *model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.filterOn {
 		switch msg.String() {
+		case "ctrl+t":
+			m.fullText = !m.fullText
+			m.filter.Placeholder = m.filterPlaceholder()
+			m.cursor, m.offset = 0, 0
+			m.refilter()
+			return m, nil
 		case "esc":
 			m.filterOn = false
 			m.filter.Blur()
 			m.filter.SetValue("")
-			m.refilter()
+			m.refilterKeep()
 			return m, nil
 		case "enter", "down", "up":
 			m.filterOn = false
@@ -671,15 +863,24 @@ func (m *model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		if m.filter.Value() != "" {
 			m.filter.SetValue("")
-			m.refilter()
+			m.refilterKeep()
+		} else if len(m.marked) > 0 {
+			m.marked = nil
+			m.flash = "marks cleared"
 		}
+	case " ":
+		m.toggleMark()
+	case "*":
+		m.markAllShown()
+	case "R":
+		m.askResetList()
 	case "up", "k":
 		m.move(-1)
 	case "down", "j":
 		m.move(1)
 	case "pgup", "ctrl+u":
 		m.move(-m.listHeight() / 2)
-	case "pgdown", "ctrl+d", " ":
+	case "pgdown", "ctrl+d":
 		m.move(m.listHeight() / 2)
 	case "home", "g":
 		m.cursor, m.offset = 0, 0
@@ -715,8 +916,12 @@ func (m *model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refilter()
 	case "u":
 		m.setProgFilter((m.progFilter + 1) % progFilterCount)
+	case "A": // all tracks: the way out of a list that a track has emptied
+		m.allTracks()
 	case "L":
 		m.screen = scrPaths
+	case "W":
+		m.modal = m.weakSpotsText()
 	case "X":
 		if m.exam != nil {
 			m.screen = scrExam
@@ -738,6 +943,7 @@ func (m *model) openDetail(ex *exercise.Exercise, back screen) {
 	m.back = back
 	m.screen = scrDetail
 	m.tab = tabScenario
+	m.noteEdit, m.suggest, m.copyKey = false, nil, ""
 	m.solShow = m.prog.Get(ex.ID).SawSolution
 	m.hintsShow = m.prog.Get(ex.ID).HintsUsed
 	if m.examLocked(ex) {
@@ -762,10 +968,28 @@ func (m *model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.flash = ""
 		return m, m.leave(func() tea.Cmd { m.goTo(m.back); return nil })
 	case "tab", "right", "l":
-		m.setTab((m.tab + 1) % 5)
+		m.setTab((m.tab + 1) % tab(len(tabNames)))
 	case "shift+tab", "left":
-		m.setTab((m.tab + 4) % 5)
-	case "1", "2", "3", "4", "5":
+		m.setTab((m.tab + tab(len(tabNames)) - 1) % tab(len(tabNames)))
+	case "y":
+		return m, m.copyNext()
+	case "A":
+		m.autoCheck = !m.autoCheck
+		if m.autoCheck {
+			m.pushSeen = m.now() // only saves from now on
+			m.flash = "auto-check on: the exercise is checked when you leave the terminal or save in VS Code"
+		} else {
+			m.flash = "auto-check off"
+		}
+	case "enter":
+		if m.tab == tabNotes {
+			return m, m.editNote()
+		}
+		if next := m.suggest; next != nil && m.flash == m.suggestFlash {
+			m.suggest = nil
+			return m, m.leave(func() tea.Cmd { m.openDetail(next, m.back); return nil })
+		}
+	case "1", "2", "3", "4", "5", "6":
 		t := tab(k[0] - '1')
 		if t == tabSolution && !m.solShow {
 			return m, m.askSolution()
@@ -795,16 +1019,36 @@ func (m *model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// every start resets the environment, so the VMs hold another
 			// exercise's lab, or none: a check would grade the wrong thing
 			m.flash = "the lab isn't set up for " + ex.ID + " — press s to start it"
+		case !m.mgr.VMRunning(lab.EnvFor(ex.Profile), k == "w"):
+			return m, m.cmdBoot(ex) // stopped with its lab kept: bring it back first
 		case k == "c":
 			return m, m.cmdCheck()
 		default:
 			return m, m.cmdShell(k == "w")
 		}
 		return m, nil
+	case "o":
+		if t := lab.CodeTargetOf(lab.EnvFor(ex.Profile)); m.mgr.StopCode(t) {
+			m.flash = "VS Code sync for " + t.VM.Hostname + ":/lab stopped — close its window when you're done"
+			return m, nil
+		}
+		if !m.isActive(ex) {
+			m.flash = "the lab isn't set up for " + ex.ID + " — press s to start it"
+			return m, nil
+		}
+		t := lab.CodeTargetOf(lab.EnvFor(ex.Profile))
+		if _, err := m.mgr.OpenInCode(t); err != nil {
+			m.flash = err.Error()
+			return m, nil
+		}
+		m.flash = "opened VS Code on " + t.VM.Hostname + ":/lab — its files sync while the window is open, and its terminal opens in the VM"
+		return m, nil
 	case "h", "H":
 		return m, m.revealHint()
 	case "v":
 		return m, m.askSolution()
+	case "x":
+		return m, m.endActive()
 	case "R":
 		m.askForget(ex, "Forget all progress on this exercise, including solved status?", func() {
 			m.solShow, m.hintsShow = false, 0
@@ -858,26 +1102,41 @@ func (m *model) goTo(s screen) {
 }
 
 // leave runs then, which moves off the exercise screen. Every way off it goes
-// through here. Leaving the exercise set up on the VMs always ends it: it is
-// cleared and its environment is reset in place, so the VMs are clean and
-// ready for the next exercise. Inside an exam the VMs carry on to the next
-// question, so they are left alone.
+// through here. Leaving keeps the lab of the exercise set up on the VMs as it
+// is, so opening it again (a) picks the work up where it was left; only
+// ending it (x), starting another exercise or exiting cleans its VMs.
 func (m *model) leave(then func() tea.Cmd) tea.Cmd {
 	ex := m.cur
-	if m.screen != scrDetail || m.exam != nil || !m.isActive(ex) {
-		return then()
+	c := then()
+	if m.screen != scrDetail && m.exam == nil && m.isActive(ex) && m.flash == "" {
+		m.flash = ex.ID + " is still set up — a goes back to it, x on it ends it"
 	}
-	if m.op != "" {
-		c := then()
-		m.flash = "lab left running — busy: " + m.op
-		return c
+	return c
+}
+
+// endActive ends the exercise set up on the VMs, after asking: it is cleared
+// and its environment reset, ready for the next exercise.
+func (m *model) endActive() tea.Cmd {
+	ex := m.cur
+	switch {
+	case m.op != "":
+		m.flash = "busy: " + m.op
+		return nil
+	case m.exam != nil:
+		// exam VMs carry on to the next question; ending them mid-exam would
+		// destroy the environment the exam relies on.
+		m.flash = "during an exam the lab carries on to the next question — it can't be ended here"
+		return nil
+	case !m.isActive(ex):
+		m.flash = "the lab isn't set up for " + ex.ID + " — nothing to end"
+		return nil
 	}
-	// start the cleanup first: then may open another exercise, whose Output tab
-	// the cleanup must not take over
-	end := m.startOp("stop", "Ending "+ex.ID+" and cleaning its VMs", ex.ID, func(ctx context.Context, w io.Writer) (bool, error) {
-		return false, m.endLab(ctx, ex, w)
-	})
-	return tea.Batch(end, then())
+	m.ask("End "+ex.ID+"? Your work in the VMs is lost and they are cleaned for the next exercise.", func() tea.Cmd {
+		return m.startOp("stop", "Ending "+ex.ID+" and cleaning its VMs", ex.ID, func(ctx context.Context, w io.Writer) (bool, error) {
+			return false, m.endLab(ctx, ex, w)
+		})
+	}, nil)
+	return nil
 }
 
 // siblings is the list the open exercise was picked from, which n/N walk, and
@@ -910,6 +1169,32 @@ func (m *model) siblings() ([]*exercise.Exercise, *int) {
 	for _, e := range list {
 		if e == m.cur {
 			return list, cur
+		}
+	}
+	// solving or resetting it can drop the open exercise out of the list
+	// (the "in progress" filter, the started labs): put it back where it
+	// was, so next and previous stay in that list instead of the catalog
+	if cur != nil && len(list) > 0 && m.cur != nil {
+		order := m.cat.Exercises // both lists keep the order they are drawn from
+		if m.back == scrBrowse && m.path != nil {
+			order = m.path.Exercises
+		}
+		rank := make(map[*exercise.Exercise]int, len(order))
+		for i, e := range order {
+			rank[e] = i
+		}
+		if r, ok := rank[m.cur]; ok {
+			at := len(list)
+			for i, e := range list {
+				if m.back == scrStarted && i == 0 && m.isActive(e) {
+					continue // the active lab heads that list, out of order
+				}
+				if rank[e] > r {
+					at = i
+					break
+				}
+			}
+			return slices.Insert(slices.Clone(list), at, m.cur), nil
 		}
 	}
 	return m.cat.Exercises, nil
@@ -1016,8 +1301,9 @@ func (m *model) askForget(ex *exercise.Exercise, q string, done func()) {
 	}
 	m.ask(q, func() tea.Cmd {
 		m.prog.Reset(ex.ID)
+		m.mgr.ForgetHistory(ex.ID)
 		delete(m.result, ex.ID)
-		m.refilter() // the progress filter may no longer keep ex
+		m.refilterKeep() // the progress filter may no longer keep ex
 		done()
 		return nil
 	}, nil)
@@ -1090,14 +1376,7 @@ func (m *model) updateStarted(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.ask(fmt.Sprintf("Reset progress on all %d started labs?", len(m.started)), func() tea.Cmd {
-			for _, e := range m.started {
-				if m.inExam(e) {
-					continue
-				}
-				m.prog.Reset(e.ID)
-				delete(m.result, e.ID)
-			}
-			m.refilter()
+			m.forgetAll(m.started)
 			m.resetStarted()
 			m.flash = "reset started labs"
 			return nil
@@ -1109,7 +1388,7 @@ func (m *model) updateStarted(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) updateEnv(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	// the VM actions wait for the running one: refuse before asking
-	if m.op != "" && strings.Contains("uxRBDXK", k) && len(k) == 1 {
+	if m.op != "" && strings.Contains("uxRBDXKP", k) && len(k) == 1 {
 		m.flash = "busy: " + m.op
 		return m, nil
 	}
@@ -1136,6 +1415,8 @@ func (m *model) updateEnv(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ask("Delete the VMs of this environment?", func() tea.Cmd { return m.envAction("destroy") }, nil)
 	case "B":
 		m.ask("Destroy and rebuild this environment from scratch (takes minutes)?", func() tea.Cmd { return m.envAction("rebuild") }, nil)
+	case "P":
+		m.ask("Build this environment now and keep a saved copy, so its exercises start in seconds? Its running VMs are deleted when it's done.", func() tea.Cmd { return m.envAction("prepare") }, nil)
 	case "X":
 		return m, m.envAction("stop-all")
 	case "K":
@@ -1149,4 +1430,71 @@ func (m *model) showingOutputOf(id string) bool {
 		return true
 	}
 	return m.screen == scrEnv && id == "env"
+}
+
+// ---- preparing environments ahead of time ----
+
+func (m *model) prepareMarker() string { return filepath.Join(m.mgr.StateDir, "prepare-offered") }
+
+// prepareOffered reports whether the first-launch offer was already made.
+func (m *model) prepareOffered() bool {
+	_, err := os.Stat(m.prepareMarker())
+	return err == nil
+}
+
+func (m *model) markPrepareOffered() { _ = os.WriteFile(m.prepareMarker(), []byte("1\n"), 0o644) }
+
+// envTracks names the tracks whose exercises run in env.
+func (m *model) envTracks(env lab.Env) string {
+	seen := map[string]bool{}
+	var names []string
+	for _, e := range m.cat.Exercises {
+		if lab.EnvFor(e.Profile).Profile == env.Profile && !seen[e.Track] {
+			seen[e.Track] = true
+			names = append(names, trackLabel(e.Track))
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+// offerPrepare asks, one environment at a time, whether to build it now, then
+// builds the chosen ones.
+func (m *model) offerPrepare(rest, chosen []lab.Env) tea.Cmd {
+	if len(rest) == 0 {
+		if len(chosen) == 0 {
+			m.flash = "the lab VMs are built on first use (or press P on the environments screen)"
+			return nil
+		}
+		return m.cmdPrepare(chosen)
+	}
+	env := rest[0]
+	mins := "about 5–15 minutes"
+	if env.Profile == exercise.ProfileK8s {
+		mins = "about 10–20 minutes"
+	}
+	q := fmt.Sprintf("First launch: build the %s now (%s)? Afterwards its exercises start in seconds instead of building it then. Used by: %s.",
+		env.Title, mins, m.envTracks(env))
+	next := append([]lab.Env(nil), rest[1:]...)
+	m.ask(q,
+		func() tea.Cmd { return m.offerPrepare(next, append(append([]lab.Env(nil), chosen...), env)) },
+		func() tea.Cmd { return m.offerPrepare(next, chosen) })
+	return nil
+}
+
+// cmdPrepare builds envs one after another and keeps only their saved copies.
+func (m *model) cmdPrepare(envs []lab.Env) tea.Cmd {
+	var names []string
+	for _, e := range envs {
+		names = append(names, e.Title)
+	}
+	m.envBack = m.screen
+	m.screen = scrEnv
+	return m.startOp("env", "Preparing "+strings.Join(names, ", "), "env", func(ctx context.Context, w io.Writer) (bool, error) {
+		for _, env := range envs {
+			if err := m.prepare(ctx, env, w); err != nil {
+				return false, err
+			}
+		}
+		return false, nil
+	})
 }

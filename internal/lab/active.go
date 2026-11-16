@@ -59,6 +59,7 @@ func (m *Manager) ClearActive(id string) {
 // start to boot and reset. An environment that a verify run is using is left
 // alone.
 func (m *Manager) EndExercise(ctx context.Context, ex *exercise.Exercise, log io.Writer) error {
+	m.FetchHistory(ctx, ex) // before the reset; home survives it, but the VMs may not
 	m.ClearActive(ex.ID)
 	env := EnvFor(ex.Profile)
 	if m.busy(env) {
@@ -203,6 +204,7 @@ func (m *Manager) DeleteVM(ctx context.Context, name string, log io.Writer) erro
 
 // DeleteAll deletes every lab VM, including stray kl-* instances.
 func (m *Manager) DeleteAll(ctx context.Context, log io.Writer) error {
+	m.StopAllCode() // with no VMs left there's nothing to sync
 	vms, err := m.VMs(ctx)
 	if err != nil {
 		return err

@@ -1,7 +1,8 @@
 # awesome_labs
 
 **Hands-on labs on your own machine** for Docker, Kubernetes, Linux, networking, cloud,
-databases, security, programming and data science — real VMs, real breakage, automatic grading.
+databases, security, programming, algorithms, data science, Git, Terraform and Ansible — real VMs,
+real breakage, automatic grading.
 
 awesome_labs creates [Lima](https://lima-vm.io) virtual machines, puts each exercise's
 scenario in place (a broken deployment, a crashed daemon, a half-finished compose
@@ -10,7 +11,7 @@ exercise has a scenario, progressive hints and a full solution you can reveal, a
 have a short tutorial on the concepts and commands to read first.
 
 ```text
- awesome_labs  Program  View  Tracks  Help                        ✔ 37/726 solved  ● 2 started, unsolved
+ awesome_labs  Program  View  Tracks  Help                        ✔ 37/1336 solved  ● 2 started, unsolved
 ╭──────────────────────────────────────────────╮╭───────────────────────────────────────────────╮
 │▸ Kubernetes · Troubleshooting the cluster     ││k8s-245 — The API server is gone               │
 │ ✔ k8s-241   ●●○○○ fix   node01 is NotReady    ││●●●○○ Medium · Fix something · Kubernetes      │
@@ -25,18 +26,22 @@ have a short tutorial on the concepts and commands to read first.
 
 | Track | Modules | Exercises |
 |-------|---------|-----------|
-| **Docker** | containers · images & Dockerfiles · volumes · networking · Compose · registries · security & limits · the daemon & host · production patterns · real-world troubleshooting | 149 |
-| **Kubernetes** | pods · deployments · services & DNS · ConfigMaps & Secrets · scheduling · storage · Jobs/CronJobs/DaemonSets · probes, resources & autoscaling · Ingress & Gateway API · NetworkPolicies · RBAC & pod security · app troubleshooting · cluster troubleshooting · cluster administration · Helm, Kustomize & CRDs · BGP with Calico and MetalLB | 234 |
-| **Offensive Security** | web exploitation (recon · SQL injection · path traversal · command injection · IDOR · SSRF · XXE · JWT · remediation) · privilege escalation · *(more modules in progress)* | 45 |
-| **Linux** | disks, systemd, shell, cgroups, namespaces, LVM · Git beyond the basics · container internals: a container by hand, overlay layers, `runc`, user namespaces, capabilities, PID 1 *(growing)* | 44 |
-| **Networking** | routing, NAT, firewalls, DNS, TLS, proxies, WireGuard, netem · OSPF, BGP, VRRP and IPv6 routing on FRR *(growing)* | 42 |
-| **Cloud** | AWS CLI, CloudFormation and IAM permission debugging against a local emulator *(growing)* | 47 |
-| **Data** | SQL, PostgreSQL operations and Redis · point-in-time recovery, replication and failover, PgBouncer, Redis Sentinel and AOF repair *(growing)* | 37 |
-| **Defensive Security** | incident response and hardening · packet-capture forensics with tshark · AppArmor, seccomp, SSH certificates and WAF tuning *(growing)* | 40 |
-| **Programming** | Python and Go *(growing)* | 45 |
-| **Data Science** | pandas, statistics and machine learning *(growing)* | 43 |
+| **Docker** | containers · images & Dockerfiles · volumes · networking · Compose · registries · security & limits · the daemon & host · production patterns · real-world troubleshooting · builds, runtime controls & Compose (BuildKit cache mounts, seccomp, cgroups, projected config) | 169 |
+| **Kubernetes** | pods · deployments · services & DNS · ConfigMaps & Secrets · scheduling · storage · Jobs/CronJobs/DaemonSets · probes, resources & autoscaling · Ingress & Gateway API · NetworkPolicies · RBAC & pod security · app troubleshooting · cluster troubleshooting · cluster administration · Helm, Kustomize & CRDs · BGP with Calico and MetalLB · advanced workloads & policy (affinity, PDBs, StatefulSets, admission policy, egress) | 254 |
+| **Offensive Security** | web exploitation (recon · SQL injection · path traversal · command injection · IDOR · SSRF · XXE · JWT · remediation) · web & API attacks (SSRF, SSTI, XXE, mass assignment, JWT forgery, business logic) · privilege escalation · *(more modules in progress)* | 65 |
+| **Linux** | disks, systemd, shell, cgroups, namespaces, LVM · Git beyond the basics · container internals: a container by hand, overlay layers, `runc`, user namespaces, capabilities, PID 1 · files, services & recovery (attrs, sysctl, systemd units & limits, filesystem repair) *(growing)* | 64 |
+| **Networking** | routing, NAT, firewalls, DNS, TLS, proxies, WireGuard, netem · OSPF, BGP, VRRP and IPv6 routing on FRR · paths, tunnels & TLS (subnetting, PMTU, GRE/VXLAN, bonding, certificate chains) *(growing)* | 62 |
+| **Cloud** | AWS CLI, CloudFormation and IAM permission debugging against a local emulator · events, storage & governance (SQS/SNS/EventBridge, S3 policies, KMS, DynamoDB, RBAC) *(growing)* | 67 |
+| **Data** | SQL, PostgreSQL operations and Redis · point-in-time recovery, replication and failover, PgBouncer, Redis Sentinel and AOF repair · SQL in depth & Redis data structures (window functions, JSONB, RLS, sorted sets, geo, ACLs) *(growing)* | 57 |
+| **Defensive Security** | incident response and hardening · packet-capture forensics with tshark · AppArmor, seccomp, SSH certificates and WAF tuning · threat hunting & containment (log analysis, deobfuscation, persistence, IR) *(growing)* | 60 |
+| **Programming** | Python and Go · common pitfalls & idioms (closures, decimals, slices, error wrapping, concurrency) *(growing)* | 65 |
+| **Data Science** | pandas, statistics and machine learning · analysis & model diagnostics (tidy data, joins, chi-square, calibration, importance) *(growing)* | 63 |
+| **Git** | the basics · branching & merging · inspecting history · undoing changes · rebasing & rewriting · stashing & tagging · remotes & collaboration · recovery & detective work (reflog, bisect, fsck) · plumbing & power tools · real-world workflows · config & aliases · ignore rules & attributes · hooks · submodules & subtrees · advanced merging (strategies, rerere, merge-tree) · searching & comparing · large repositories (shallow, partial, sparse) · repository troubleshooting · identity, SSH signing & trailers · multi-problem incidents · revisions, refs & scripting (gitrevisions, for-each-ref, plumbing commits, grafts) | 220 |
+| **Terraform** | the basics (init, plan, apply, outputs, provider versions) · variables, expressions & meta-arguments (`count`, `for_each`, templates, validation) · working with state (moved, removed, import, workspaces, backends, recovery) · modules (local, Git-pinned, refactoring into modules) · real Docker infrastructure with the `kreuzwerker/docker` provider · functions, lifecycle & testing (dynamic blocks, `lifecycle`, `check`, `import`, `terraform test`) *(growing)* | 70 |
+| **Ansible** | inventories & ad-hoc commands · playbooks (handlers, loops, conditionals, idempotence) · templates, files & variables (Jinja2, precedence, Vault) · roles & reuse (role design, dependencies, Galaxy from Git, ansible-lint) · operations & incidents (check mode, validate, block/rescue, become, constructed inventories) against SSH-managed nodes · control flow & extending Ansible (tags, blockinfile, delegation, handlers, vault IDs, collections, custom filters/modules) *(growing)* | 70 |
+| **Algorithms** | searching & sorting · data structures · graphs · dynamic programming · strings, greedy & maths — each exercise solvable in **Python or Go** *(growing)* | 50 |
 
-That's 726 exercises so far, with a target of 250 per track; ideas for what comes next are
+That's 1336 exercises so far, with a target of 250 per track; ideas for what comes next are
 in [docs/PENDING.md](docs/PENDING.md).
 
 Difficulty rises through each module (1 = beginner … 5 = expert), mixing **build** tasks
@@ -75,7 +80,7 @@ See [the isolation validation guide](docs/ISOLATION.md) for verification steps.
 
 | Environment | VMs | What's inside |
 |-------------|-----|---------------|
-| **Docker host** | `kl-docker` (2 CPU, 3 GiB) | Ubuntu 24.04, Docker Engine + Compose + Buildx, common images pre-pulled, networking and diagnostic tools, a Python data-science image |
+| **Docker host** | `kl-docker` (2 CPU, 3 GiB) | Ubuntu 24.04, Docker Engine + Compose + Buildx, common images pre-pulled, networking and diagnostic tools, a Python data-science image, Terraform 1.16 with an offline provider mirror, Ansible (ansible-core 2.21) with SSH-managed node containers |
 | **Kubernetes cluster** | `kl-cp` → `controlplane` (2 CPU, 3 GiB)<br>`kl-worker` → `node01` (2 CPU, 2.5 GiB) | kubeadm **v1.36**, containerd 2, Calico (enforces NetworkPolicies), metrics-server, local-path storage (default StorageClass), Traefik ingress + Gateway API (NodePorts 30080/30443), Helm |
 | **Offensive security lab** | `kl-offsec` (2 CPU, 3 GiB) | Ubuntu 24.04, Docker (hosts the vulnerable targets), attacker tooling (nmap, ncat, hydra, john, …) and wordlists under `/usr/share/kl`. Attacker and targets are the same isolated box |
 
@@ -83,7 +88,13 @@ The cluster deliberately runs one minor release behind the newest Kubernetes, so
 upgrade exercise has something to upgrade to.
 
 VMs are created **on first use** (5–15 minutes, mostly package installs and image
-pulls) and reused afterwards. Before every exercise awesome_labs **resets** the environment
+pulls). A freshly built environment is kept as a **saved copy**, so later starts clone it
+in seconds instead of building again, and pulled images go into a local cache
+(`~/.awesome_labs/cache/images/`) that is loaded into new VMs, which keeps rebuilds off
+Docker Hub's pull limits (images come through `mirror.gcr.io` first). On its first launch the app offers to build each
+environment right away instead, one question per environment, so later exercises start
+in seconds; `awesome_labs env prepare [docker|k8s|offsec]` (or **P** on the environments
+screen) does the same at any time. Before every exercise awesome_labs **resets** the environment
 to a pristine snapshot: it removes leftover containers, namespaces and cluster-scoped
 objects, restores changed config files (daemon.json, kubelet config, static pod
 manifests, …) and restarts what needs restarting — usually in a few seconds.
@@ -158,11 +169,11 @@ Reset needs progress to reset; hints, the solution and resetting are locked duri
 exam. The Started labs and environments screens dim their buttons the same way.
 
 The exercise screen itself has no menus: its buttons and tabs do everything there, and the
-keys that work on every screen still do. Elsewhere, **File** moves between the screens.
-**View** and **Tracks** shape the list: View also holds learning paths. **VMs** holds everything about the lab
-environments. **View → Show** filters the list by progress: all, solved, in progress
-(started, not solved) or no progress. **Tracks** shows how many exercises of each track you
-have solved. A greyed-out item says why when you pick it.
+keys that work on every screen still do. Elsewhere, **Program** holds Exit. **View** and
+**Tracks** shape the list: View also holds learning paths, and **View → Show** filters the
+list by progress: all, solved, in progress (started, not solved) or no progress. **Tracks**
+lists every track in the catalogue (including Git, Terraform, Ansible and Algorithms) with
+how many of its exercises you have solved. A greyed-out item says why when you pick it.
 
 The mouse works throughout: pick a track from the **Tracks** menu, click a row to select
 it and double-click to open it, click the tabs and the buttons (Start, Terminal, Check,
@@ -176,15 +187,18 @@ shortcut. While the mouse is in use, most terminals select text with `shift`+dra
 | Key | Action |
 |-----|--------|
 | `↑↓` / `j k` | move · `n`/`p` next/previous module |
-| `/` | filter by id, title, tag, module or difficulty |
+| `/` | filter by id, title, tag, module or difficulty · `ctrl+t` while filtering also searches the scenarios, tutorials and hints |
 | `tab` | switch track |
 | `u` | cycle the progress filter: all · solved · in progress (started, not solved) · no progress |
 | `enter` | open an exercise |
+| `space` / `*` | mark or unmark the highlighted exercise / mark every exercise shown (again: clear) · `esc` clears the marks |
+| `R` | **reset progress** of the marked exercises, or the highlighted one when none is marked (asks first; notes are kept). View → *Reset progress of all shown* resets the whole filtered list — e.g. `u` to *in progress*, then reset them all |
 | `L` | **learning paths** — focus the list on a curated path, with progress |
+| `W` | **weak spots** — the modules where you needed the most hints, solutions and checks, and the exercises worth redoing |
 | `X` | **exam mode** — start a timed exam, or return to the running one |
 | `a` | jump to the exercise you're **working on** (shown as `▶` in the header and list) |
 | `S` | your labs: the active exercise, then others started earlier and not solved |
-| `e` | environments & VMs: live state of every VM; create, stop, reset, rebuild, delete — `X` stops all, `K` deletes all |
+| `e` | environments & VMs: live state of every VM; create, stop, reset, rebuild, delete, **P** prepare (build and keep a saved copy) — `X` stops all, `K` deletes all |
 | `Q` (`q` on the list, `ctrl+c`, Program → Exit) | exit — always **deletes every lab VM**, running or stopped, first, and starting the app deletes any left over (`ctrl+c` while busy or deleting exits at once and leaves them as they are) |
 
 ### In an exercise
@@ -194,26 +208,77 @@ shortcut. While the mouse is in use, most terminals select text with `shift`+dra
 | `s` | **start** — prepare the lab (creates the VMs the first time) |
 | `t` | open a **terminal** in the docker host / control plane (`exit` to come back) |
 | `w` | open a terminal on **node01** (Kubernetes only) |
+| `o` | work on the lab in your own **VS Code** (see below); while its sync runs, `o` (**■ Stop VS Code**) stops it |
 | `c` | **check** your work |
 | `h` | reveal the next **hint** |
 | `v` | reveal the **solution** (asks first) |
+| `x` | **end** the exercise: forget its lab and clean its VMs for the next one (asks first) |
 | `R` | **reset progress** on this exercise (asks first) |
-| `1`–`5` / `tab` / `←→` | Scenario · Learn · Hints · Solution · Output |
+| `A` | **auto-check** on/off: check whenever you leave the terminal or save in VS Code |
+| `y` | **copy** a code block of the tab you're on; `y` again copies the next one |
+| `enter` | after a pass, open the suggested next exercise (the next unsolved one in the list) |
+| `1`–`6` / `tab` / `←→` | Scenario · Learn · Hints · Solution · Output · Notes |
 | `n` / `N` | next / previous in the list you opened it from: the filtered list, Started labs, or the exam's questions |
 | `esc` / `q` | back to where you opened it from |
 
-Leaving the exercise that is set up on the VMs, by any route except the environments
-screen, always ends it and **cleans its VMs**: the environment is reset to pristine in
-place and stays running, so the next exercise on it starts without building or booting
-anything (and skips its own reset). An exercise that breaks its environment beyond a
-reset has its VMs deleted instead. Starting an exercise **deletes the VMs of every
-other environment**, running or stopped, since that exercise doesn't need them. During
-an exam the VMs keep running, since they carry on to the next question. The environments screen goes
+Leaving the exercise that is set up on the VMs **keeps its lab**: your files and
+containers stay in the VMs, and `a` (or opening it again) takes you back to carry on
+where you left off. The lab is cleaned only when you **end** the exercise (`x`), start
+another one (asks first), or exit the app. Ending it resets the environment to pristine
+in place and leaves it running, so the next exercise on it starts without building or
+booting anything (and skips its own reset). An exercise that breaks its environment
+beyond a reset has its VMs deleted instead. Starting an exercise **deletes the VMs of
+every other environment**, running or stopped, since that exercise doesn't need them.
+During an exam the VMs keep running, since they carry on to the next question. The environments screen goes
 back to the exercise you came from.
+
+**Notes** (tab 6, `enter` to edit, `esc` saves) are yours per exercise, kept in
+`~/.awesome_labs/notes.json`; resetting progress keeps them. **Your commands:** shells
+opened from awesome_labs (`t`, `w`, or VS Code's terminal) keep a history per exercise,
+which each check copies to `~/.awesome_labs/history/`. Once you reveal the solution, the
+Solution tab lists your commands under it, to compare. **Copying** uses the system
+clipboard (`pbcopy`, `wl-copy`, `xclip`…) and falls back to the terminal (OSC 52), which
+also works over SSH.
+
+While an environment builds or boots, the status line shows the step it's on, the time
+so far and, from the last run of the same kind, an estimate with a progress bar.
 
 Inside the VMs the scenario is also in **`/lab/TASK.md`**; `/lab` is your working
 directory. On the control plane `kubectl` (alias `k`, with completion) is configured
 for you, and `ssh node01` gets you onto the worker.
+
+### In VS Code
+
+`o` on the exercise screen (or `awesome_labs code [docker|k8s|node01|offsec]`, which
+defaults to the exercise you're on) opens the lab in **your own VS Code**. Nothing is
+installed in the VMs: no VS Code server, no extension, no mount.
+
+- **Files:** the workspace folder `~/.awesome_labs/vscode/<lab>/` mirrors the VM's `/lab`
+  both ways while the window is open. A task in the workspace, *awesome_labs: sync /lab*,
+  runs `awesome_labs sync` over the VM's existing SSH connection. VS Code starts it when
+  the window opens; allow automatic tasks if it asks. Saving a file writes it into the VM
+  within a second, and anything created or changed in the VM shows up in the editor.
+  Files are written into the VM in place, so a file bind-mounted into a container keeps
+  working. New files belong to the lab user. `.git` folders, symlinks and files over
+  16 MiB are not mirrored.
+- **Terminal:** the workspace's terminal opens a shell in the VM (`awesome_labs shell`),
+  with a node01 profile in the Kubernetes lab. `awesome_labs shell`, `code` and `sync` run
+  beside the app.
+- **The VM wins:** when the sync (re)connects, and when a file changed on both sides, the
+  VM's version is kept. A reset or a new exercise empties the folder along with `/lab`.
+  Any of your edits that the VM never got are copied to `~/.awesome_labs/vscode/backups/`
+  first.
+
+**Stopping:** press `o` again on the exercise screen (the button reads **■ Stop VS Code**
+while a sync runs), or close the window. Exiting awesome_labs, or deleting all VMs, stops
+every sync too. Stopping leaves the VS Code window open, since VS Code can't be told from
+outside to close one window. Its edits just stop reaching the VM.
+
+`code` must be on your PATH (in VS Code: *Shell Command: Install 'code' command in
+PATH*); on macOS the app in `/Applications` is found without it. Set
+`AWESOME_LABS_CODE=codium` (or `cursor`, …) to use another editor of the same family.
+Files outside `/lab` (`/etc`, the cluster's manifests…) are still edited from the
+terminal.
 
 ### Learning paths
 
@@ -224,6 +289,9 @@ for you, and `ssh node01` gets you onto the worker.
 | Kubernetes for developers (CKAD-style) | workloads, config, services, probes, ingress, policies, Helm/Kustomize |
 | Kubernetes administration (CKA-style) | scheduling, storage, networking, RBAC, cluster troubleshooting, upgrades, etcd |
 | Kubernetes security | RBAC, pod security, network policies, secrets, audit, encryption |
+| Web exploitation | injection, access control, SSRF, XXE and more against vulnerable web apps, then the patch |
+| Terraform fundamentals | plan & apply, variables and expressions, state, modules, Docker infrastructure (difficulty ≤ 3) |
+| Ansible fundamentals | inventories, playbooks, templates, variables, Vault and roles (difficulty ≤ 3) |
 | Troubleshooting only | every *fix* exercise |
 | Incident drills | the multi-problem incidents at the end of each module |
 
@@ -244,16 +312,23 @@ awesome_labs exam status     # the running exam
 awesome_labs exam history    # past results
 ```
 
-### Saving memory
+### Saving memory, and other settings
 
 Only one environment runs at a time: starting a Docker exercise deletes the Kubernetes
 VMs and vice versa, while the environment you're using stays up and is cleaned between
-exercises. Exiting always deletes every lab VM, running or stopped, and starting the app
-deletes any left over. With `auto_stop: true` (the default), solving an exercise with
-`awesome_labs check` stops its VMs. Settings live in `~/.awesome_labs/config.yaml`:
+exercises. By default exiting deletes every lab VM, running or stopped, and starting the
+app deletes any left over. With `on_exit: stop` they are stopped instead (their memory is
+freed, their disks kept), and with `keep` left running: either way the exercise you were
+on is still set up next time, and `t` or `c` starts its VMs again without a reset. With
+`auto_stop: true` (the default), solving an exercise with `awesome_labs check` stops its
+VMs. Settings live in `~/.awesome_labs/config.yaml`:
 
 ```yaml
 auto_stop: true
+on_exit: delete        # delete · stop · keep
+auto_check: false      # start with auto-check on (A toggles it)
+check_updates: false   # look for a newer release once a day; nothing about you is sent
+theme: auto            # auto · dark · light (NO_COLOR=1 turns colours off)
 docker:       {cpus: 2, memory: 3GiB}       # applied when a VM is (re)created:
 controlplane: {cpus: 2, memory: 3GiB}       #   awesome_labs env rebuild docker|k8s
 worker:       {cpus: 2, memory: 2560MiB}
@@ -269,11 +344,17 @@ awesome_labs paths [path-id]            # learning paths and progress
 awesome_labs show k8s-101 [--solution]
 awesome_labs start docker-042           # prepare the lab
 awesome_labs shell docker|k8s|node01|offsec    # open a shell
+awesome_labs code [docker|k8s|node01|offsec]   # open the lab's /lab in VS Code
+awesome_labs sync [docker|k8s|node01|offsec]   # mirror /lab into ~/.awesome_labs/vscode/<lab> (VS Code runs it)
 awesome_labs check docker-042           # grade (exit code 0 = solved)
 awesome_labs forget docker-042          # erase progress on one exercise
 awesome_labs env status|up|stop|reset|rebuild|destroy [docker|k8s|offsec]
+awesome_labs env prepare [docker|k8s|offsec]   # build now and keep a saved copy (VMs deleted after)
+awesome_labs env cache [docker|k8s|offsec]     # fill the local image cache (no env: show it)
 awesome_labs vms                        # every lab VM with status, CPU and memory
 awesome_labs vms stop|delete <name|all> # e.g. vms delete kl-offsec · vms stop all
+awesome_labs doctor [--fix]             # check this machine and awesome_labs for the usual trouble
+awesome_labs version [--check]          # this build's version; --check: is a newer release out?
 ```
 
 You work on **one exercise at a time**: starting one resets its environment, so it
@@ -283,9 +364,15 @@ you solve it, or when its environment is reset, rebuilt or deleted.
 Only **one awesome_labs runs at a time**: the app and every command that changes the
 VMs or your progress take a lock on `~/.awesome_labs/app.lock`, and a second one exits with
 *another awesome_labs is already running*. The lock goes away with the process, even after
-a crash. The read-only `list`, `show`, `status`, `paths` and `lint` still run beside it.
+a crash. The read-only `list`, `show`, `status`, `paths` and `lint` still run beside it,
+and so do `shell`, `code` and `sync`, which only work inside a running VM.
 
 Progress is stored in `~/.awesome_labs/progress.json`, logs in `~/.awesome_labs/logs/`.
+When something seems stuck or broken, `awesome_labs doctor` is the first thing to run:
+it checks Lima (and QEMU on Linux), free disk and RAM, whether the `awesome_labs` on your
+PATH is a different build from the one you're running, environments left marked busy by
+a crashed run (`--fix` clears them), stray VMs and missing saved copies, and says how to
+fix each one.
 
 ## Writing exercises
 
@@ -307,11 +394,13 @@ to work on exercise files without rebuilding.
 ```text
 main.go                    CLI entry point, verify runner
 internal/exercise          exercise model + loader/validator
-internal/lab               environments: create/bootstrap/reset VMs, run setup/check/solve
+internal/lab               environments: create/bootstrap/reset VMs, run setup/check/solve, VS Code sync
 internal/lima              thin limactl wrapper
 internal/install           OS detection and the install command
 internal/tui               Bubble Tea interface
-internal/progress          ~/.awesome_labs/progress.json
+internal/progress          ~/.awesome_labs/progress.json and notes.json
+internal/doctor            awesome_labs doctor
+internal/update            the newer-release check
 internal/exam              timed exams
 internal/config            ~/.awesome_labs/config.yaml
 learning-paths.yaml        curated paths

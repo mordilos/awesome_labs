@@ -228,6 +228,16 @@ func (m *Manager) ensure(ctx context.Context, env Env, log io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// A whole environment created now is cloned from its saved bases when
+	// they are up to date, or else built from scratch and its bases saved.
+	missing := 0
+	for _, vm := range env.VMs {
+		if all[vm.Name].Status == "" {
+			missing++
+		}
+	}
+	fromBase := missing == len(env.VMs) && m.usableBases(ctx, env, all, log)
+	fresh := missing == len(env.VMs) && !fromBase
 	// Create + start every VM in parallel (image download / apt install dominate).
 	var wg sync.WaitGroup
 	errs := make([]error, len(env.VMs))
@@ -241,6 +251,13 @@ func (m *Manager) ensure(ctx context.Context, env Env, log io.Writer) error {
 		go func(i int, vm VM, st string) {
 			defer wg.Done()
 			pw := prefixWriter(m.detail(log), vm.Hostname)
+			if st == "" && fromBase {
+				fmt.Fprintf(log, "==> starting VM %s from its saved copy\n", vm.Name)
+				if errs[i] = lima.Clone(ctx, baseName(vm), vm.Name, pw); errs[i] == nil {
+					errs[i] = lima.Start(ctx, vm.Name, pw)
+				}
+				return
+			}
 			if st == "" {
 				fmt.Fprintf(log, "==> creating VM %s (%s)\n", vm.Name, vm.Hostname)
 				tmpl, err := m.template(env, vm)
@@ -262,6 +279,16 @@ func (m *Manager) ensure(ctx context.Context, env Env, log io.Writer) error {
 			return e
 		}
 	}
+	if fromBase && !m.basesMatch(ctx, env) {
+		fmt.Fprintf(log, "==> the copy of %s came up on a different address — building it from scratch\n", env.Title)
+		for _, vm := range env.VMs {
+			if err := lima.Delete(ctx, vm.Name, m.detail(log)); err != nil {
+				return err
+			}
+			m.dropBase(ctx, vm, nil, m.detail(log))
+		}
+		return m.ensure(ctx, env, log)
+	}
 	if err := m.pushKit(ctx, env, log); err != nil {
 		return err
 	}
@@ -273,6 +300,14 @@ func (m *Manager) ensure(ctx context.Context, env Env, log io.Writer) error {
 	if m.ready(ctx, env.Primary()) {
 		return nil
 	}
+	// Images cached on this computer by an earlier build go in first, so the
+	// bootstrap only pulls what's missing.
+	var lw sync.WaitGroup
+	for _, vm := range env.VMs {
+		lw.Add(1)
+		go func(vm VM) { defer lw.Done(); m.loadCachedImages(ctx, vm, log) }(vm)
+	}
+	lw.Wait()
 	fmt.Fprintf(log, "==> bootstrapping %s\n", env.Title)
 	switch env.Profile {
 	case exercise.ProfileDocker:
@@ -292,6 +327,12 @@ func (m *Manager) ensure(ctx context.Context, env Env, log io.Writer) error {
 		}
 	}
 	m.SetTainted(env, false)
+	m.saveEnvImages(ctx, env, log)
+	if fresh {
+		if err := m.saveBases(ctx, env, log); err != nil {
+			return err
+		}
+	}
 	fmt.Fprintf(log, "==> %s is ready\n", env.Title)
 	return nil
 }
@@ -373,12 +414,17 @@ func (m *Manager) bootstrapScript(name string) (string, error) {
 
 // root runs a script as root on vm, failing on non-zero exit.
 func (m *Manager) root(ctx context.Context, vm VM, body string, env map[string]string, log io.Writer) (string, error) {
-	var out bytes.Buffer
-	ws := []io.Writer{&out, prefixWriter(m.logFile, vm.Hostname)}
+	extra := io.Discard
 	if log != nil && log != m.logFile && log != io.Discard {
-		ws = append(ws, prefixWriter(log, vm.Hostname))
+		extra = prefixWriter(log, vm.Hostname)
 	}
-	w := io.MultiWriter(ws...)
+	return m.rootTo(ctx, vm, body, env, extra)
+}
+
+// rootTo is root with the output copied, unprefixed, to extra besides the log file.
+func (m *Manager) rootTo(ctx context.Context, vm VM, body string, env map[string]string, extra io.Writer) (string, error) {
+	var out bytes.Buffer
+	w := io.MultiWriter(&out, prefixWriter(m.logFile, vm.Hostname), extra)
 	code, err := lima.Run(ctx, vm.Name, lima.Script{AsRoot: true, Body: body, Env: env}, w)
 	if err != nil {
 		return out.String(), err
@@ -399,7 +445,14 @@ func (m *Manager) runBootstrap(ctx context.Context, vm VM, script string, env ma
 	}
 	env["LAB_USER"] = m.User
 	fmt.Fprintf(log, "==> [%s] %s\n", vm.Hostname, script)
-	_, err = m.root(ctx, vm, body, env, io.Discard)
+	// The full output goes to the log file only; the "==> " step lines the
+	// script prints also reach the operation log, so a long first boot shows
+	// where it is instead of looking stuck.
+	steps := io.Discard
+	if log != m.logFile {
+		steps = stepWriter(log, vm.Hostname)
+	}
+	_, err = m.rootTo(ctx, vm, body, env, steps)
 	return err
 }
 
@@ -736,11 +789,13 @@ func (m *Manager) Destroy(ctx context.Context, env Env, log io.Writer) error {
 	return nil
 }
 
-// Rebuild destroys then re-creates the environment.
+// Rebuild destroys then re-creates the environment from scratch, replacing
+// its saved copy too.
 func (m *Manager) Rebuild(ctx context.Context, env Env, log io.Writer) error {
 	if err := m.Destroy(ctx, env, log); err != nil {
 		return err
 	}
+	m.DropBases(ctx, env, m.detail(log))
 	return m.Ensure(ctx, env, log)
 }
 
@@ -822,7 +877,7 @@ func (m *Manager) Check(ctx context.Context, ex *exercise.Exercise, log io.Write
 	}
 	for _, vm := range env.VMs {
 		if all[vm.Name].Status != "Running" {
-			return false, fmt.Errorf("%s is not running: open the exercise (enter) to set the lab up again", vm.Hostname)
+			return false, fmt.Errorf("%s is not running: start the exercise again to set its lab up", vm.Hostname)
 		}
 	}
 	ok := true
@@ -845,6 +900,9 @@ func (m *Manager) Check(ctx context.Context, ex *exercise.Exercise, log io.Write
 		if err := run(w, ex.CheckWorker); err != nil {
 			return false, err
 		}
+	}
+	if !m.HoldEnvs {
+		m.FetchHistory(ctx, ex) // your commands, to compare with the solution
 	}
 	if ok && !m.HoldEnvs {
 		m.ClearActive(ex.ID) // solved: no longer being worked on
@@ -895,7 +953,11 @@ func (m *Manager) ShellCommand(env Env, worker bool) *exec.Cmd {
 		}
 	}
 	m.setClean(env, false) // a shell can change anything
-	return lima.ShellCommand(vm.Name, "/lab")
+	hist := ""
+	if a, ok := m.Active(); ok && EnvFor(a.Profile).Profile == env.Profile {
+		hist = historyName(a.ID)
+	}
+	return lima.ShellCommand(vm.Name, "/lab", hist)
 }
 
 // ---- tainted environments (destructive exercises) ----
@@ -956,6 +1018,40 @@ func resetSSHMux(name string) {
 func lastLine(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	return lines[len(lines)-1]
+}
+
+// stepWriter forwards only the "==> " step lines of a script's output to w,
+// tagged with the VM's hostname.
+func stepWriter(w io.Writer, host string) io.Writer {
+	if w == nil || w == io.Discard {
+		return io.Discard
+	}
+	return &steps{w: w, host: host}
+}
+
+type steps struct {
+	w    io.Writer
+	host string
+	buf  []byte
+	mu   sync.Mutex
+}
+
+func (s *steps) Write(b []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.buf = append(s.buf, b...)
+	for {
+		i := bytes.IndexByte(s.buf, '\n')
+		if i < 0 {
+			break
+		}
+		line := string(s.buf[:i])
+		s.buf = s.buf[i+1:]
+		if rest, ok := strings.CutPrefix(line, "==> "); ok {
+			fmt.Fprintf(s.w, "==> [%s] %s\n", s.host, rest)
+		}
+	}
+	return len(b), nil
 }
 
 type prefixed struct {

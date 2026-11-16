@@ -8,20 +8,24 @@ what to consolidate. The target doesn't lower the bar: a lab should carry a real
 scenario and teach a concept. The parts of this list that the existing exercises don't cover
 are not started.
 
-Exercise counts as of v0.14.0:
+Exercise counts (1,336 total):
 
 | Topic | Exercises | Target | Track | Module files |
 |---|---|---|---|---|
-| Docker | 149 | 250 | `docker` | `exercises/docker/` |
-| Kubernetes | 234 | 250 | `kubernetes` | `exercises/kubernetes/` |
-| Offensive security | 45 | 250 | `offsec` | `exercises/offsec/` |
-| Linux & systems | 44 | 250 | `linux` | `exercises/linux/` |
-| Networking | 42 | 250 | `networking` | `exercises/networking/` |
-| Cloud & platform | 47 | 250 | `cloud` | `exercises/cloud/` |
-| Data | 37 | 250 | `data` | `exercises/data/` |
-| Defensive security | 40 | 250 | `defensive` | `exercises/defensive/` |
-| Programming | 45 | 250 | `programming` | `exercises/programming/` |
-| Data science | 43 | 250 | `datascience` | `exercises/datascience/` |
+| Docker | 169 | 250 | `docker` | `exercises/docker/` |
+| Kubernetes | 254 | 250 | `kubernetes` | `exercises/kubernetes/` |
+| Offensive security | 65 | 250 | `offsec` | `exercises/offsec/` |
+| Linux & systems | 64 | 250 | `linux` | `exercises/linux/` |
+| Networking | 62 | 250 | `networking` | `exercises/networking/` |
+| Cloud & platform | 67 | 250 | `cloud` | `exercises/cloud/` |
+| Data | 57 | 250 | `data` | `exercises/data/` |
+| Defensive security | 60 | 250 | `defensive` | `exercises/defensive/` |
+| Programming | 65 | 250 | `programming` | `exercises/programming/` |
+| Data science | 63 | 250 | `datascience` | `exercises/datascience/` |
+| Git | 220 | 250 | `git` | `exercises/git/` |
+| Terraform | 70 | 250 | `terraform` | `exercises/terraform/` |
+| Ansible | 70 | 250 | `ansible` | `exercises/ansible/` |
+| Algorithms | 50 | 250 | `algorithms` | `exercises/algorithms/` |
 
 - [Suggested order](#suggested-order)
 - [Shared lab foundations](#shared-lab-foundations)
@@ -235,7 +239,7 @@ Email:
 | Track | What you'd practise | Runs on |
 |---|---|---|
 | **AWS CLI** | CLI fluency, S3, IAM policy documents, `--query` filtering, DynamoDB, SQS and SNS, CloudFormation | Docker VM; moto server in a container |
-| **Infrastructure as code** | Ansible against the lab VMs, Terraform state problems, drift, broken modules, the AWS provider against moto | Existing VMs; light |
+| **Infrastructure as code** | Terraform started in `exercises/terraform/` (basics, expressions, state, modules, Docker). Ansible started in `exercises/ansible/` (inventory, playbooks, templates & vault, roles, operations) against kl-node containers. Still to do: Ansible against the real lab VMs and k8s nodes, Molecule-style role testing; the AWS provider against moto (the provider is ~600 MB, so it needs its own mirror image); CI/plan review workflows | Existing VMs; light |
 | **Observability** | Prometheus queries and alerts, Grafana, Loki, finding why a metric or alert is missing | k8s lab; may need more memory |
 | **CI/CD & GitOps** | Gitea and a runner, broken pipelines, Argo CD drift and sync failures | k8s lab; memory-heavy |
 
